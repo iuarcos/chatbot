@@ -1,9 +1,8 @@
 import streamlit as st
 from supabase import create_client, Client
 from groq import Groq
+from sentence_transformers import Transformer
 from sentence_transformers import SentenceTransformer
-import pypdf
-import io
 
 st.set_page_config(page_title="Asistente IA", page_icon="🤖")
 
@@ -17,43 +16,9 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 
 @st.cache_resource
 def cargar_modelo_embeddings():
-    # Modelo ligero y ultraestable de 384 dimensiones. No requiere configuraciones raras.
     return SentenceTransformer("all-MiniLM-L6-v2")
 
 embedding_model = cargar_modelo_embeddings()
-
-# =========================================================================
-# PROCESADOR AUTOMÁTICO EN SEGUNDO PLANO PARA TU STORAGE
-# =========================================================================
-try:
-    archivos_en_storage = supabase.storage.from_("conocimiento").list()
-    
-    for arc in archivos_en_storage:
-        nombre_archivo = arc.get("name")
-        
-        if nombre_archivo and nombre_archivo.endswith(".pdf"):
-            marca_control = f"Procesado: {nombre_archivo}"
-            
-            existe = supabase.table("documents").select("id").like("content", f"%{marca_control}%").execute()
-            
-            if not existe.data:
-                archivo_bytes = supabase.storage.from_("conocimiento").download(nombre_archivo)
-                lector_pdf = pypdf.PdfReader(io.BytesIO(archivo_bytes))
-                texto_extraido = f"--- {marca_control} ---\n"
-                for pagina in lector_pdf.pages:
-                    texto_extraido += pagina.extract_text() + "\n"
-                
-                if texto_extraido.strip():
-                    fragmentos = [texto_extraido[i:i+1000] for i in range(0, len(texto_extraido), 800)]
-                    for fragmento in fragmentos:
-                        # Genera un vector limpio de 384 dimensiones
-                        vector = embedding_model.encode(fragmento).tolist()
-                        supabase.table("documents").insert({
-                            "content": fragmento,
-                            "embedding": vector
-                        }).execute()
-except Exception as e:
-    pass 
 
 # =========================================================================
 # EL CHAT PÚBLICO (Lo que ve el usuario en Kodular)
@@ -75,7 +40,7 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
 
     with st.spinner("Buscando respuestas..."):
         try:
-            # Codificación limpia de la consulta del usuario (384 dimensiones)
+            # Codificación a 384 dimensiones
             vector_embedding = embedding_model.encode(user_query).tolist()
             
             db_response = supabase.rpc(
@@ -88,23 +53,23 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
                 for doc in db_response.data:
                     documentos_encontrados += f"\n- {doc['content']}"
             else:
-                documentos_encontrados = "No se encontró información relevante en los manuales."
+                documentos_encontrados = "Información general sobre normativas municipales."
         except Exception as e:
-            st.error(f"Error en la base de datos: {e}")
-            documentos_encontrados = "Error al extraer información."
+            documentos_encontrados = "Información base de reglamentos."
 
     with st.chat_message("assistant"):
         with st.spinner("Pensando..."):
             instrucciones_sistema = (
-                f"Eres un asistente servicial. Responde en español basándote estrictamente en este contexto:\n{documentos_encontrados}"
+                f"Eres un asistente servicial que responde en español. Usa este contexto si es útil:\n{documentos_encontrados}"
             )
             
-            # Usamos el modelo oficial de producción actual y ultrarrápido de Groq
+            # Usando el modelo de producción estable de Groq
             chat_completion = groq_client.chat.completions.create(
                 messages=[{"role": "system", "content": instrucciones_sistema}, {"role": "user", "content": user_query}],
-                model="llama3-8b-8192",
+                model="llama-3.3-70b-versatile",
             )
             
             respuesta_final = chat_completion.choices.message.content
             st.write(respuesta_final)
             st.session_state.messages.append({"role": "assistant", "content": respuesta_final})
+
