@@ -2,8 +2,6 @@ import streamlit as st
 from supabase import create_client, Client
 from groq import Groq
 from sentence_transformers import SentenceTransformer
-import pypdf
-import io
 
 st.set_page_config(page_title="Asistente IA", page_icon="🤖")
 st.title("💬 Consulta con la IA")
@@ -23,43 +21,7 @@ def cargar_modelo_embeddings():
 
 embedding_model = cargar_modelo_embeddings()
 
-# =========================================================================
-# ESCUCHADOR SECRETO PARA EL STORAGE DE SUPABASE
-# =========================================================================
-if "action" in st.query_params and st.query_params["action"] == "procesar_storage":
-    try:
-        datos_webhook = st.json_request_body() if hasattr(st, 'json_request_body') else {}
-        nombre_archivo = datos_webhook.get("record", {}).get("name")
-        
-        if nombre_archivo and (nombre_archivo.endswith(".pdf") or nombre_archivo.endswith(".md") or nombre_archivo.endswith(".txt")):
-            archivo_bytes = supabase.storage.from_("conocimiento").download(nombre_archivo)
-            
-            texto_extraido = ""
-            if nombre_archivo.endswith(".pdf"):
-                lector_pdf = pypdf.PdfReader(io.BytesIO(archivo_bytes))
-                for pagina in lector_pdf.pages:
-                    texto_extraido += pagina.extract_text() + "\n"
-            else:
-                texto_extraido = archivo_bytes.decode("utf-8")
-                
-            if texto_extraido.strip():
-                fragmentos = [texto_extraido[i:i+1000] for i in range(0, len(texto_extraido), 800)]
-                for fragmento in fragmentos:
-                    vector = embedding_model.encode(fragmento).tolist()
-                    supabase.table("documents").insert({
-                        "content": fragmento,
-                        "embedding": vector
-                    }).execute()
-                    
-            st.write("OK - Procesado correctamente")
-            st.stop()
-    except Exception as e:
-        st.write(f"Error procesando: {e}")
-        st.stop()
-
-# =========================================================================
-# EL CHAT PÚBLICO (Lo que ve el usuario en Kodular)
-# =========================================================================
+# Historial del chat en pantalla
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "¡Hola! ¿En qué puedo ayudarte hoy?"}]
 
@@ -94,14 +56,13 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
         with st.spinner("Pensando..."):
             instrucciones_sistema = f"Responde basándote estrictamente en este contexto:\n{documentos_encontrados}"
             
-            # Corregida la sangría de este bloque para que pertenezca al spinner de carga
             chat_completion = groq_client.chat.completions.create(
                 messages=[{"role": "system", "content": instrucciones_sistema}, {"role": "user", "content": user_query}],
                 model="openai/gpt-oss-20b",
             )
             
-            # Corregido con el [0] para evitar fallos de formato
-            respuesta_final = chat_completion.choices[0].message.content
+            respuesta_final = chat_completion.choices.message.content
             st.write(respuesta_final)
             st.session_state.messages.append({"role": "assistant", "content": respuesta_final})
+
 
