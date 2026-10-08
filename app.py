@@ -1,7 +1,6 @@
 import streamlit as st
 from supabase import create_client, Client
 from groq import Groq
-from sentence_transformers import Transformer
 from sentence_transformers import SentenceTransformer
 
 st.set_page_config(page_title="Asistente IA", page_icon="🤖")
