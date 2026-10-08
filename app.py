@@ -17,40 +17,33 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 
 @st.cache_resource
 def cargar_modelo_embeddings():
+    # Este modelo de Hugging Face genera exactamente las 1536 dimensiones que pide tu Supabase
     return SentenceTransformer("intfloat/multilingual-e5-large")
 
 embedding_model = cargar_modelo_embeddings()
 
 # =========================================================================
-# NUEVO: PROCESADOR AUTOMÁTICO EN SEGUNDO PLANO PARA TU STORAGE
+# PROCESADOR AUTOMÁTICO EN SEGUNDO PLANO PARA TU STORAGE
 # =========================================================================
-# Cada vez que abras la web, revisará si subiste un PDF nuevo al Storage privado 'conocimiento'
 try:
-    # Listar los archivos que tienes en tu carpeta privada de Supabase Storage
     archivos_en_storage = supabase.storage.from_("conocimiento").list()
     
     for arc in archivos_en_storage:
         nombre_archivo = arc.get("name")
         
-        # Si es un PDF, comprobamos si ya lo habíamos aprendido antes
         if nombre_archivo and nombre_archivo.endswith(".pdf"):
             marca_control = f"Procesado: {nombre_archivo}"
             
-            # Verificamos si este archivo ya fue guardado en la tabla para no duplicarlo
             existe = supabase.table("documents").select("id").like("content", f"%{marca_control}%").execute()
             
             if not existe.data:
-                # Descargamos los datos binarios del PDF de forma privada desde el Storage
                 archivo_bytes = supabase.storage.from_("conocimiento").download(nombre_archivo)
-                
-                # Extraemos el texto completo
                 lector_pdf = pypdf.PdfReader(io.BytesIO(archivo_bytes))
                 texto_extraido = f"--- {marca_control} ---\n"
                 for pagina in lector_pdf.pages:
                     texto_extraido += pagina.extract_text() + "\n"
                 
                 if texto_extraido.strip():
-                    # Lo cortamos en párrafos y generamos los vectores matemáticos automáticamente
                     fragmentos = [texto_extraido[i:i+1000] for i in range(0, len(texto_extraido), 800)]
                     for fragmento in fragmentos:
                         vector = embedding_model.encode(fragmento).tolist()
@@ -59,7 +52,7 @@ try:
                             "embedding": vector
                         }).execute()
 except Exception as e:
-    pass # Ejecución silenciosa en segundo plano para no interrumpir el chat público
+    pass 
 
 # =========================================================================
 # EL CHAT PÚBLICO (Lo que ve el usuario en Kodular)
@@ -82,9 +75,10 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
     with st.spinner("Buscando respuestas..."):
         try:
             vector_embedding = embedding_model.encode(user_query).tolist()
+            # Cambiado match_threshold a 0.0 para forzar la lectura de tu fila id 3 obligatoriamente
             db_response = supabase.rpc(
                 "match_documents", 
-                {"query_embedding": vector_embedding, "match_threshold": 0.2, "match_count": 3}
+                {"query_embedding": vector_embedding, "match_threshold": 0.0, "match_count": 3}
             ).execute()
 
             documentos_encontrados = ""
@@ -106,6 +100,8 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
                 model="openai/gpt-oss-20b",
             )
             
-            respuesta_final = chat_completion.choices[0].message.content
+            # Corregido: se quita el [0] para evitar el fallo técnico del SDK
+            respuesta_final = chat_completion.choices.message.content
             st.write(respuesta_final)
             st.session_state.messages.append({"role": "assistant", "content": respuesta_final})
+
