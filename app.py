@@ -17,7 +17,7 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 
 @st.cache_resource
 def cargar_modelo_embeddings():
-    return SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+    return SentenceTransformer("mixedbread-ai/mxbai-embed-large-v1")
 
 embedding_model = cargar_modelo_embeddings()
 
