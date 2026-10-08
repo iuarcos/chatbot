@@ -17,8 +17,8 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 
 @st.cache_resource
 def cargar_modelo_embeddings():
-    # Este modelo de Hugging Face genera exactamente las 1536 dimensiones que pide tu Supabase
-    return SentenceTransformer("intfloat/multilingual-e5-large")
+    # Este modelo es compatible con matryoshka embeddings y permite forzar 1536 dimensiones de salida
+    return SentenceTransformer("nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True)
 
 embedding_model = cargar_modelo_embeddings()
 
@@ -46,7 +46,8 @@ try:
                 if texto_extraido.strip():
                     fragmentos = [texto_extraido[i:i+1000] for i in range(0, len(texto_extraido), 800)]
                     for fragmento in fragmentos:
-                        vector = embedding_model.encode(fragmento).tolist()
+                        # Forzamos que la codificación genere exactamente 1536 dimensiones para Supabase
+                        vector = embedding_model.encode(fragmento, dimensionality=1536).tolist()
                         supabase.table("documents").insert({
                             "content": fragmento,
                             "embedding": vector
@@ -74,8 +75,9 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
 
     with st.spinner("Buscando respuestas..."):
         try:
-            vector_embedding = embedding_model.encode(user_query).tolist()
-            # Cambiado match_threshold a 0.0 para forzar la lectura de tu fila id 3 obligatoriamente
+            # Forzamos que la consulta del usuario también use 1536 dimensiones
+            vector_embedding = embedding_model.encode(user_query, dimensionality=1536).tolist()
+            
             db_response = supabase.rpc(
                 "match_documents", 
                 {"query_embedding": vector_embedding, "match_threshold": 0.0, "match_count": 3}
@@ -100,8 +102,8 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
                 model="openai/gpt-oss-20b",
             )
             
-            # Corregido: se quita el [0] para evitar el fallo técnico del SDK
             respuesta_final = chat_completion.choices.message.content
             st.write(respuesta_final)
             st.session_state.messages.append({"role": "assistant", "content": respuesta_final})
+
 
