@@ -1,7 +1,7 @@
 import streamlit as st
 from supabase import create_client, Client
 from groq import Groq
-from openai import OpenAI
+from sentence_transformers import SentenceTransformer
 import pypdf
 import io
 
@@ -12,20 +12,15 @@ SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 
-# Si usas la misma clave de Groq para OpenAI (o si tienes una OPENAI_API_KEY en tus secretos, cámbiala aquí)
-OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", GROQ_API_KEY)
-
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 groq_client = Groq(api_key=GROQ_API_KEY)
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
-def generar_embedding(texto):
-    # Este modelo genera exactamente las 1536 dimensiones nativas que exige tu Supabase
-    response = openai_client.embeddings.create(
-        input=texto,
-        model="text-embedding-3-small"
-    )
-    return response.data[0].embedding
+@st.cache_resource
+def cargar_modelo_embeddings():
+    # Modelo local gratuito que genera las 1536 dimensiones requeridas usando einops
+    return SentenceTransformer("nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True)
+
+embedding_model = cargar_modelo_embeddings()
 
 # =========================================================================
 # PROCESADOR AUTOMÁTICO EN SEGUNDO PLANO PARA TU STORAGE
@@ -51,7 +46,7 @@ try:
                 if texto_extraido.strip():
                     fragmentos = [texto_extraido[i:i+1000] for i in range(0, len(texto_extraido), 800)]
                     for fragmento in fragmentos:
-                        vector = generar_embedding(fragmento)
+                        vector = embedding_model.encode(fragmento, dimensionality=1536).tolist()
                         supabase.table("documents").insert({
                             "content": fragmento,
                             "embedding": vector
@@ -79,7 +74,7 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
 
     with st.spinner("Buscando respuestas..."):
         try:
-            vector_embedding = generar_embedding(user_query)
+            vector_embedding = embedding_model.encode(user_query, dimensionality=1536).tolist()
             
             db_response = supabase.rpc(
                 "match_documents", 
@@ -102,12 +97,9 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
             
             chat_completion = groq_client.chat.completions.create(
                 messages=[{"role": "system", "content": instrucciones_sistema}, {"role": "user", "content": user_query}],
-                model="openai/gpt-oss-20b",
+                model="llama3-8b-8192",  # Modelo estándar gratuito y rápido de Groq
             )
             
             respuesta_final = chat_completion.choices.message.content
             st.write(respuesta_final)
             st.session_state.messages.append({"role": "assistant", "content": respuesta_final})
-
-
-

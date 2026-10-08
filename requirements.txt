@@ -2,4 +2,5 @@ streamlit
 supabase
 groq
 pypdf
-openai
+sentence-transformers
+einops
