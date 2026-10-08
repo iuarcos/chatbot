@@ -26,15 +26,12 @@ embedding_model = cargar_modelo_embeddings()
 # =========================================================================
 # ESCUCHADOR SECRETO PARA EL STORAGE DE SUPABASE
 # =========================================================================
-# Si Supabase nos avisa de que subiste un archivo al Storage, este bloque lo procesa en oculto
 if "action" in st.query_params and st.query_params["action"] == "procesar_storage":
     try:
-        # Obtenemos los detalles del archivo que acabas de subir
         datos_webhook = st.json_request_body() if hasattr(st, 'json_request_body') else {}
         nombre_archivo = datos_webhook.get("record", {}).get("name")
         
         if nombre_archivo and (nombre_archivo.endswith(".pdf") or nombre_archivo.endswith(".md") or nombre_archivo.endswith(".txt")):
-            # Descargar el archivo de forma segura desde tu Bucket privado 'conocimiento'
             archivo_bytes = supabase.storage.from_("conocimiento").download(nombre_archivo)
             
             texto_extraido = ""
@@ -46,7 +43,6 @@ if "action" in st.query_params and st.query_params["action"] == "procesar_storag
                 texto_extraido = archivo_bytes.decode("utf-8")
                 
             if texto_extraido.strip():
-                # Cortar en párrafos y vectorizar automáticamente
                 fragmentos = [texto_extraido[i:i+1000] for i in range(0, len(texto_extraido), 800)]
                 for fragmento in fragmentos:
                     vector = embedding_model.encode(fragmento).tolist()
@@ -97,10 +93,15 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
     with st.chat_message("assistant"):
         with st.spinner("Pensando..."):
             instrucciones_sistema = f"Responde basándote estrictamente en este contexto:\n{documentos_encontrados}"
+            
+            # Corregida la sangría de este bloque para que pertenezca al spinner de carga
             chat_completion = groq_client.chat.completions.create(
                 messages=[{"role": "system", "content": instrucciones_sistema}, {"role": "user", "content": user_query}],
                 model="openai/gpt-oss-20b",
             )
-            respuesta_final = chat_completion.choices.message.content
+            
+            # Corregido con el [0] para evitar fallos de formato
+            respuesta_final = chat_completion.choices[0].message.content
             st.write(respuesta_final)
             st.session_state.messages.append({"role": "assistant", "content": respuesta_final})
+
