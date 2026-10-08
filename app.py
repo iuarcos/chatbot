@@ -1,7 +1,7 @@
 import streamlit as st
 from supabase import create_client, Client
 from groq import Groq
-from sentence_transformers import SentenceTransformer
+from openai import OpenAI
 import pypdf
 import io
 
@@ -12,15 +12,20 @@ SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 
+# Si usas la misma clave de Groq para OpenAI (o si tienes una OPENAI_API_KEY en tus secretos, cámbiala aquí)
+OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", GROQ_API_KEY)
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 groq_client = Groq(api_key=GROQ_API_KEY)
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
-@st.cache_resource
-def cargar_modelo_embeddings():
-    # Este modelo es compatible con matryoshka embeddings y permite forzar 1536 dimensiones de salida
-    return SentenceTransformer("nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True)
-
-embedding_model = cargar_modelo_embeddings()
+def generar_embedding(texto):
+    # Este modelo genera exactamente las 1536 dimensiones nativas que exige tu Supabase
+    response = openai_client.embeddings.create(
+        input=texto,
+        model="text-embedding-3-small"
+    )
+    return response.data[0].embedding
 
 # =========================================================================
 # PROCESADOR AUTOMÁTICO EN SEGUNDO PLANO PARA TU STORAGE
@@ -46,8 +51,7 @@ try:
                 if texto_extraido.strip():
                     fragmentos = [texto_extraido[i:i+1000] for i in range(0, len(texto_extraido), 800)]
                     for fragmento in fragmentos:
-                        # Forzamos que la codificación genere exactamente 1536 dimensiones para Supabase
-                        vector = embedding_model.encode(fragmento, dimensionality=1536).tolist()
+                        vector = generar_embedding(fragmento)
                         supabase.table("documents").insert({
                             "content": fragmento,
                             "embedding": vector
@@ -75,8 +79,7 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
 
     with st.spinner("Buscando respuestas..."):
         try:
-            # Forzamos que la consulta del usuario también use 1536 dimensiones
-            vector_embedding = embedding_model.encode(user_query, dimensionality=1536).tolist()
+            vector_embedding = generar_embedding(user_query)
             
             db_response = supabase.rpc(
                 "match_documents", 
@@ -105,5 +108,6 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
             respuesta_final = chat_completion.choices.message.content
             st.write(respuesta_final)
             st.session_state.messages.append({"role": "assistant", "content": respuesta_final})
+
 
 
