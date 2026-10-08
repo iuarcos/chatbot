@@ -1,6 +1,7 @@
 import streamlit as st
 from supabase import create_client, Client
 from groq import Groq
+from sentence_transformers import SentenceTransformer
 import pypdf
 import io
 
@@ -14,13 +15,12 @@ GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-def generar_embedding_groq(texto):
-    # Genera embeddings de 1024 dimensiones de forma gratuita y nativa con Groq
-    respuesta = groq_client.embeddings.create(
-        model="nomic-embed-text",
-        input=texto
-    )
-    return respuesta.data[0].embedding
+@st.cache_resource
+def cargar_modelo_embeddings():
+    # Modelo ligero y ultraestable de 384 dimensiones. No requiere configuraciones raras.
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
+embedding_model = cargar_modelo_embeddings()
 
 # =========================================================================
 # PROCESADOR AUTOMÁTICO EN SEGUNDO PLANO PARA TU STORAGE
@@ -46,7 +46,8 @@ try:
                 if texto_extraido.strip():
                     fragmentos = [texto_extraido[i:i+1000] for i in range(0, len(texto_extraido), 800)]
                     for fragmento in fragmentos:
-                        vector = generar_embedding_groq(fragmento)
+                        # Genera un vector limpio de 384 dimensiones
+                        vector = embedding_model.encode(fragmento).tolist()
                         supabase.table("documents").insert({
                             "content": fragmento,
                             "embedding": vector
@@ -74,7 +75,8 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
 
     with st.spinner("Buscando respuestas..."):
         try:
-            vector_embedding = generar_embedding_groq(user_query)
+            # Codificación limpia de la consulta del usuario (384 dimensiones)
+            vector_embedding = embedding_model.encode(user_query).tolist()
             
             db_response = supabase.rpc(
                 "match_documents", 
@@ -97,10 +99,10 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
                 f"Eres un asistente servicial. Responde en español basándote estrictamente en este contexto:\n{documentos_encontrados}"
             )
             
-            # Cambiado a mixtral-8x7b-32768 que maneja mejor contextos largos y estructurados en Groq
+            # Usamos el modelo oficial de producción actual y ultrarrápido de Groq
             chat_completion = groq_client.chat.completions.create(
                 messages=[{"role": "system", "content": instrucciones_sistema}, {"role": "user", "content": user_query}],
-                model="mixtral-8x7b-32768",
+                model="llama-3.1-8b-instant",
             )
             
             respuesta_final = chat_completion.choices.message.content
