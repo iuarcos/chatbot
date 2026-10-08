@@ -1,7 +1,6 @@
 import streamlit as st
 from supabase import create_client, Client
 from groq import Groq
-from sentence_transformers import SentenceTransformer
 import pypdf
 import io
 
@@ -15,12 +14,13 @@ GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-@st.cache_resource
-def cargar_modelo_embeddings():
-    # Modelo local gratuito que genera las 1536 dimensiones requeridas usando einops
-    return SentenceTransformer("nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True)
-
-embedding_model = cargar_modelo_embeddings()
+def generar_embedding_groq(texto):
+    # Genera embeddings de 1024 dimensiones de forma gratuita y nativa con Groq
+    respuesta = groq_client.embeddings.create(
+        model="nomic-embed-text",
+        input=texto
+    )
+    return respuesta.data[0].embedding
 
 # =========================================================================
 # PROCESADOR AUTOMÁTICO EN SEGUNDO PLANO PARA TU STORAGE
@@ -46,7 +46,7 @@ try:
                 if texto_extraido.strip():
                     fragmentos = [texto_extraido[i:i+1000] for i in range(0, len(texto_extraido), 800)]
                     for fragmento in fragmentos:
-                        vector = embedding_model.encode(fragmento, dimensionality=1536).tolist()
+                        vector = generar_embedding_groq(fragmento)
                         supabase.table("documents").insert({
                             "content": fragmento,
                             "embedding": vector
@@ -74,7 +74,7 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
 
     with st.spinner("Buscando respuestas..."):
         try:
-            vector_embedding = embedding_model.encode(user_query, dimensionality=1536).tolist()
+            vector_embedding = generar_embedding_groq(user_query)
             
             db_response = supabase.rpc(
                 "match_documents", 
@@ -93,11 +93,14 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
 
     with st.chat_message("assistant"):
         with st.spinner("Pensando..."):
-            instrucciones_sistema = f"Responde basándote estrictamente en este contexto:\n{documentos_encontrados}"
+            instrucciones_sistema = (
+                f"Eres un asistente servicial. Responde en español basándote estrictamente en este contexto:\n{documentos_encontrados}"
+            )
             
+            # Cambiado a mixtral-8x7b-32768 que maneja mejor contextos largos y estructurados en Groq
             chat_completion = groq_client.chat.completions.create(
                 messages=[{"role": "system", "content": instrucciones_sistema}, {"role": "user", "content": user_query}],
-                model="llama3-8b-8192",  # Modelo estándar gratuito y rápido de Groq
+                model="mixtral-8x7b-32768",
             )
             
             respuesta_final = chat_completion.choices.message.content
