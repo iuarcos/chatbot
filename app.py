@@ -99,7 +99,7 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
             instrucciones_sistema = f"Responde basándote estrictamente en este contexto:\n{documentos_encontrados}"
             chat_completion = groq_client.chat.completions.create(
                 messages=[{"role": "system", "content": instrucciones_sistema}, {"role": "user", "content": user_query}],
-                model="llama3-8b-8192",
+                model="llama-3.1-8b-instant",
             )
             respuesta_final = chat_completion.choices.message.content
             st.write(respuesta_final)
