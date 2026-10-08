@@ -1,5 +1,5 @@
 streamlit
 supabase
 groq
-sentence-transformers
 pypdf
+openai
