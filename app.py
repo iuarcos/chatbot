@@ -13,20 +13,20 @@ st.set_page_config(
 # 1. Load credentials from Streamlit Secrets
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-SUPABASE_SERVICE_ROLE_KEY = st.secrets["SUPABASE_SERVICE_ROLE_KEY"]
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+    SUPABASE_SERVICE_ROLE_KEY = st.secrets["SUPABASE_SERVICE_ROLE_KEY"]
+    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 
-# Public client: used for document search in the chat
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    # Public client for document search
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Admin client: used only for indexing and maintenance
-supabase_admin = create_client(
-    SUPABASE_URL,
-    SUPABASE_SERVICE_ROLE_KEY
-)
+    # Admin client for indexing and maintenance
+    supabase_admin = create_client(
+        SUPABASE_URL,
+        SUPABASE_SERVICE_ROLE_KEY
+    )
 
-groq_client = Groq(api_key=GROQ_API_KEY)
+    groq_client = Groq(api_key=GROQ_API_KEY)
 
 except Exception as e:
     st.error("Could not initialize the services. Check Streamlit Secrets.")
