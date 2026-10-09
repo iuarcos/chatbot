@@ -243,7 +243,9 @@ if user_query:
                     or "No se pudo generar una respuesta."
                 )
 
-        except Exception:
+        except Exception as e:
+            st.error("Se ha producido un error al generar la respuesta.")
+            st.exception(e)
             answer = (
                 "No he podido consultar la documentación correctamente. "
                 "Inténtalo de nuevo más tarde."
