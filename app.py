@@ -153,7 +153,7 @@ with st.expander("Index documentation"):
                 with st.spinner("Saving chunks to Supabase..."):
                     # Remove previous chunks from this source.
                     # Existing legacy rows with null metadata are preserved.
-                    supabase.table("documents").delete().filter(
+                    supabase_admin.table("documents").delete().filter(
                         "metadata->>source", "eq",
                         "PROGRAMA IUARCOS._final_26mayo2023.pdf"
                     ).execute()
@@ -174,7 +174,7 @@ with st.expander("Index documentation"):
 
                     batch_size = 50
                     for offset in range(0, len(records), batch_size):
-                        supabase.table("documents").insert(
+                        supabase_admin.table("documents").insert(
                             records[offset:offset + batch_size]
                         ).execute()
 
