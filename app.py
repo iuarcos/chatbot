@@ -236,7 +236,7 @@ if user_query:
                         },
                         *recent_history
                     ],
-                    temperature=0.1
+                    temperature=0.1,
                     max_completion_tokens=500
                 )
 
