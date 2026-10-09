@@ -84,31 +84,44 @@ def build_context(documents, max_documents=18):
     return "\n\n---\n\n".join(sections)
 
 
+
+import logging
+
+
 def retrieve_documents(query):
-    """Combina búsqueda semántica y búsqueda por palabras clave."""
-    query_embedding = embedding_model.encode(
-        query,
-        normalize_embeddings=True
-    ).tolist()
+    """Combina búsqueda semántica y por palabras clave.
+    Si una falla, intenta utilizar los resultados de la otra.
+    """
+    documents = []
+    seen_ids = set()
+    errors = []
 
-    semantic_result = supabase.rpc(
-        "match_documents",
-        {
-            "query_embedding": query_embedding,
-            "match_count": 15
-        }
-    ).execute()
+    # 1. Búsqueda semántica
+    try:
+        query_embedding = embedding_model.encode(
+            query,
+            normalize_embeddings=True
+        ).tolist()
 
-    documents = semantic_result.data or []
-    seen_ids = {
-        doc.get("id")
-        for doc in documents
-        if doc.get("id") is not None
-    }
+        semantic_result = supabase.rpc(
+            "match_documents",
+            {
+                "query_embedding": query_embedding,
+                "match_count": 15
+            }
+        ).execute()
 
-    # La búsqueda por palabras clave es complementaria.
-    # Si la función SQL todavía no existe, la búsqueda semántica sigue
-    # funcionando mientras se configura.
+        for doc in semantic_result.data or []:
+            doc_id = doc.get("id")
+            if doc_id is not None and doc_id not in seen_ids:
+                documents.append(doc)
+                seen_ids.add(doc_id)
+
+    except Exception as e:
+        logging.exception("Error en la búsqueda semántica")
+        errors.append(f"Semántica: {type(e).__name__}: {e}")
+
+    # 2. Búsqueda por palabras clave
     try:
         keyword_result = supabase.rpc(
             "search_documents_keyword",
@@ -120,14 +133,19 @@ def retrieve_documents(query):
 
         for doc in keyword_result.data or []:
             doc_id = doc.get("id")
-
-            if doc_id is None or doc_id not in seen_ids:
+            if doc_id is not None and doc_id not in seen_ids:
                 documents.append(doc)
-                if doc_id is not None:
-                    seen_ids.add(doc_id)
+                seen_ids.add(doc_id)
 
-    except Exception:
-        pass
+    except Exception as e:
+        logging.exception("Error en la búsqueda por palabras clave")
+        errors.append(f"Palabras clave: {type(e).__name__}: {e}")
+
+    # Solo falla la recuperación si fallan ambas búsquedas.
+    if errors and not documents:
+        raise RuntimeError(
+            "No se pudo recuperar información. " + " | ".join(errors)
+        )
 
     return documents
 
