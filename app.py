@@ -59,7 +59,7 @@ No menciones los documentos, el contexto recuperado, las búsquedas ni los mecan
 """
 
 
-def build_context(documents, max_documents=18):
+def build_context(documents, max_documents=5):
     sections = []
     seen = set()
 
@@ -73,6 +73,7 @@ def build_context(documents, max_documents=18):
             continue
 
         seen.add(key)
+        content = content[:1500]
         sections.append(
             f"FUENTE: {source}\n"
             f"CONTENIDO:\n{content}"
@@ -107,7 +108,7 @@ def retrieve_documents(query):
             "match_documents",
             {
                 "query_embedding": query_embedding,
-                "match_count": 15
+                "match_count": 8
             }
         ).execute()
 
@@ -127,7 +128,7 @@ def retrieve_documents(query):
             "search_documents_keyword",
             {
                 "search_query": query,
-                "result_limit": 10
+                "result_limit": 5
             }
         ).execute()
 
@@ -220,10 +221,10 @@ if user_query:
                     message
                     for message in st.session_state.messages
                     if message["role"] in ("user", "assistant")
-                ][-8:]
+                ][-4:]
 
                 completion = groq_client.chat.completions.create(
-                    model="openai/gpt-oss-120b",
+                    model="openai/gpt-oss-20b",
                     messages=[
                         {
                             "role": "system",
@@ -236,6 +237,7 @@ if user_query:
                         *recent_history
                     ],
                     temperature=0.1
+                    max_completion_tokens=500
                 )
 
                 answer = (
