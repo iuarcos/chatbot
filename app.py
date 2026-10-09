@@ -36,7 +36,6 @@ except Exception:
 
 
 SYSTEM_PROMPT = """
-SYSTEM_PROMPT = """
 Eres un asistente virtual diseñado para ayudar a los usuarios a encontrar, comprender y utilizar la información disponible en la documentación proporcionada.
 
 Tu objetivo es ofrecer respuestas útiles, claras, precisas, coherentes y naturales, adaptadas a la pregunta y al contexto de la conversación.
@@ -112,6 +111,7 @@ Antes de responder, comprueba que:
 
 Tu prioridad es ayudar al usuario a comprender la información y resolver su consulta con precisión, claridad, honestidad y sentido práctico.
 """
+
 
 def build_context(documents, max_documents=5):
     sections = []
