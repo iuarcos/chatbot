@@ -148,7 +148,7 @@ if user_query:
                     {
                         "query_embedding": query_embedding,
                         "match_threshold": 0.0,
-                        "match_count": 5
+                        "match_count": 10
                     }
                 ).execute()
 
