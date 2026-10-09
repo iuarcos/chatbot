@@ -3,7 +3,7 @@ from supabase import create_client, Client
 from groq import Groq
 from sentence_transformers import SentenceTransformer
 
-st.set_page_config(page_title="Asistente IA", page_icon="🤖")
+st.set_page_config(page_title="Asistente IA", page_icon="馃")
 
 # Cargar secretos de las variables de entorno de Streamlit
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
@@ -15,7 +15,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 
-with st.expander("Prueba t��cnica de Storage"):
+with st.expander("Prueba técnica de Storage"):
     if st.button("Comprobar acceso al PDF"):
         try:
             archivo = supabase.storage.from_("Bd_conocimiento").download(
@@ -29,7 +29,7 @@ with st.expander("Prueba t��cnica de Storage"):
             if archivo[:5] == b"%PDF-":
                 st.success("El PDF se ha descargado correctamente.")
             else:
-                st.warning("Se ha descargado contenido, pero no parece un PDF v��lido.")
+                st.warning("Se ha descargado contenido, pero no parece un PDF válido.")
 
         except Exception as e:
             st.error("Error al descargar el PDF.")
@@ -42,26 +42,26 @@ def cargar_modelo_embeddings():
 embedding_model = cargar_modelo_embeddings()
 
 # =========================================================================
-# EL CHAT PÚBLICO (Lo que ve el usuario en Kodular)
+# EL CHAT P脷BLICO (Lo que ve el usuario en Kodular)
 # =========================================================================
-st.title("💬 Consulta con la IA")
-st.write("Haz tu pregunta sobre la documentación oficial.")
+st.title("馃挰 Consulta con la IA")
+st.write("Haz tu pregunta sobre la documentaci贸n oficial.")
 
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "¡Hola! ¿En qué puedo ayudarte hoy?"}]
+    st.session_state.messages = [{"role": "assistant", "content": "隆Hola! 驴En qu茅 puedo ayudarte hoy?"}]
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-if user_query := st.chat_input("Escribe tu pregunta aquí..."):
+if user_query := st.chat_input("Escribe tu pregunta aqu铆..."):
     st.session_state.messages.append({"role": "user", "content": user_query})
     with st.chat_message("user"):
         st.write(user_query)
 
     with st.spinner("Buscando respuestas..."):
         try:
-            # Codificación a 384 dimensiones
+            # Codificaci贸n a 384 dimensiones
             vector_embedding = embedding_model.encode(user_query).tolist()
             
             db_response = supabase.rpc(
@@ -74,17 +74,17 @@ if user_query := st.chat_input("Escribe tu pregunta aquí..."):
                 for doc in db_response.data:
                     documentos_encontrados += f"\n- {doc['content']}"
             else:
-                documentos_encontrados = "Información general sobre normativas municipales."
+                documentos_encontrados = "Informaci贸n general sobre normativas municipales."
         except Exception as e:
-            documentos_encontrados = "Información base de reglamentos."
+            documentos_encontrados = "Informaci贸n base de reglamentos."
 
     with st.chat_message("assistant"):
         with st.spinner("Pensando..."):
             instrucciones_sistema = (
-                f"Eres un asistente servicial que responde en español. Usa este contexto si es útil:\n{documentos_encontrados}"
+                f"Eres un asistente servicial que responde en espa帽ol. Usa este contexto si es 煤til:\n{documentos_encontrados}"
             )
             
-            # Usando el modelo de producción estable de Groq
+            # Usando el modelo de producci贸n estable de Groq
             chat_completion = groq_client.chat.completions.create(
                 messages=[{"role": "system", "content": instrucciones_sistema}, {"role": "user", "content": user_query}],
                 model="llama-3.3-70b-versatile",
