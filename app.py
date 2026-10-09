@@ -89,6 +89,93 @@ with st.expander("Technical test: Supabase Storage"):
             st.error("PDF download failed.")
             st.code(str(e))
 
+# 4.1 Index PDF into Supabase
+with st.expander("Index documentation"):
+    st.write(
+        "Extract the PDF text, split it into chunks, "
+        "generate embeddings and save them to Supabase."
+    )
+
+    if st.button("Index PDF now", key="index_pdf"):
+        from io import BytesIO
+        from pypdf import PdfReader
+
+        try:
+            with st.spinner("Downloading and reading the PDF..."):
+                pdf_bytes = supabase.storage.from_(
+                    "Bd_conocimiento"
+                ).download(
+                    "PROGRAMA IUARCOS._final_26mayo2023.pdf"
+                )
+
+                reader = PdfReader(BytesIO(pdf_bytes))
+                pages = [
+                    page.extract_text() or ""
+                    for page in reader.pages
+                ]
+                full_text = "\n".join(pages).strip()
+
+            if not full_text:
+                st.error(
+                    "No text could be extracted from the PDF. "
+                    "It may be scanned or image-based."
+                )
+            else:
+                chunk_size = 1000
+                overlap = 150
+                chunks = []
+                start = 0
+
+                while start < len(full_text):
+                    chunk = full_text[start:start + chunk_size].strip()
+                    if chunk:
+                        chunks.append(chunk)
+                    start += chunk_size - overlap
+
+                with st.spinner("Generating embeddings..."):
+                    embeddings = embedding_model.encode(
+                        chunks,
+                        normalize_embeddings=True
+                    ).tolist()
+
+                st.write(f"Text extracted: {len(full_text):,} characters")
+                st.write(f"Chunks prepared: {len(chunks)}")
+
+                with st.spinner("Saving chunks to Supabase..."):
+                    # Remove previous chunks from this source.
+                    # Existing legacy rows with null metadata are preserved.
+                    supabase.table("documents").delete().filter(
+                        "metadata->>source", "eq",
+                        "PROGRAMA IUARCOS._final_26mayo2023.pdf"
+                    ).execute()
+
+                    records = [
+                        {
+                            "content": chunk,
+                            "metadata": {
+                                "source": "PROGRAMA IUARCOS._final_26mayo2023.pdf",
+                                "chunk_index": index,
+                                "page_source": "PDF"
+                            },
+                            "embedding": embedding
+                        }
+                        for index, (chunk, embedding)
+                        in enumerate(zip(chunks, embeddings))
+                    ]
+
+                    batch_size = 50
+                    for offset in range(0, len(records), batch_size):
+                        supabase.table("documents").insert(
+                            records[offset:offset + batch_size]
+                        ).execute()
+
+                st.success(
+                    f"Indexing completed: {len(records)} chunks saved."
+                )
+
+        except Exception as e:
+            st.error("Indexing failed.")
+            st.exception(e)
 
 # 5. Chat history
 if "messages" not in st.session_state:
