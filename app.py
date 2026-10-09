@@ -188,4 +188,3 @@ if user_query:
     st.session_state.messages.append(
         {"role": "assistant", "content": answer}
     )
-```
