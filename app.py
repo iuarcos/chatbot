@@ -177,10 +177,7 @@ if user_query:
                         or "No se pudo generar una respuesta."
                     )
 
-            except Exception:
-                answer = (
-                    "Ha ocurrido un error al consultar la documentación. "
-                    "Revisa los registros de la aplicación."
+            except Exception as e: answer = f"Error técnico: {type(e).__name__}: {e}"
                 )
 
         st.write(answer)
