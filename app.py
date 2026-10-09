@@ -359,7 +359,7 @@ if user_query:
                     "match_documents",
                     {
                         "query_embedding": query_embedding,
-                        "match_count": 10
+                        "match_count": 15
                     }
                 ).execute()
 
