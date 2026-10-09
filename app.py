@@ -179,7 +179,6 @@ if user_query:
 
             except Exception as e:
                 answer = f"Error técnico: {type(e).__name__}: {e}"
-                )
 
         st.write(answer)
 
