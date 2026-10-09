@@ -101,6 +101,8 @@ def index_document():
 st.title("Asistente IUARCOS")
 st.write("Consulta tus dudas sobre la documentación de IUARCOS.")
 
+with st.expander("Preparación interna del documento"): if st.button("Indexar documento TXT"): try: total = index_document() st.success(f"Documento indexado correctamente: {total} fragmentos.") except Exception as e: st.error(f"Error al indexar: {type(e).__name__}: {e}")
+
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {
