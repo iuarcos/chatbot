@@ -14,17 +14,26 @@ GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
+
 with st.expander("Prueba t¨¦cnica de Storage"):
     if st.button("Comprobar acceso al PDF"):
         try:
             archivo = supabase.storage.from_("Bd_conocimiento").download(
                 "PROGRAMA IUARCOS._final_26mayo2023.pdf"
             )
-            st.success(
-                f"PDF descargado correctamente: {len(archivo):,} bytes"
-            )
+
+            st.write("Tipo de respuesta:", type(archivo).__name__)
+            st.write("Tama?o:", len(archivo), "bytes")
+            st.write("Cabecera del archivo:", repr(archivo[:8]))
+
+            if archivo[:5] == b"%PDF-":
+                st.success("El PDF se ha descargado correctamente.")
+            else:
+                st.warning("Se ha descargado contenido, pero no parece un PDF v¨¢lido.")
+
         except Exception as e:
-            st.error(f"Error al descargar el PDF: {e}")
+            st.error("Error al descargar el PDF.")
+            st.code(f"{type(e).__name__}: {e}")
 
 @st.cache_resource
 def cargar_modelo_embeddings():
