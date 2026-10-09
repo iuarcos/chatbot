@@ -1,8 +1,11 @@
-
 import streamlit as st
 from supabase import create_client
 from groq import Groq
 from sentence_transformers import SentenceTransformer
+from pathlib import PurePosixPath
+import hashlib
+import csv
+import io
 
 st.set_page_config(
     page_title="Asistente IUARCOS",
@@ -10,8 +13,11 @@ st.set_page_config(
     layout="centered"
 )
 
-TXT_FILE = "PROGRAMA_IUARCOS_260523.txt"
 BUCKET = "Bd_conocimiento"
+SUPPORTED_EXTENSIONS = {".txt", ".csv"}
+CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 150
+BATCH_SIZE = 50
 
 try:
     supabase = create_client(
@@ -22,9 +28,11 @@ try:
         st.secrets["SUPABASE_URL"],
         st.secrets["SUPABASE_SERVICE_ROLE_KEY"]
     )
-    groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+    groq_client = Groq(
+        api_key=st.secrets["GROQ_API_KEY"]
+    )
 except Exception:
-    st.error("No se pudieron conectar los servicios. Revisa la configuración.")
+    st.error("No se pudieron conectar los servicios.")
     st.stop()
 
 
@@ -40,84 +48,265 @@ except Exception:
     st.stop()
 
 
-def split_text(text, chunk_size=1000, overlap=150):
+def split_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
+    text = text.strip()
+    if not text:
+        return []
+
     chunks = []
+    step = chunk_size - overlap
     start = 0
 
     while start < len(text):
         chunk = text[start:start + chunk_size].strip()
-        if len(chunk) >= 100:
+        if chunk:
             chunks.append(chunk)
-        start += chunk_size - overlap
+        start += step
 
     return chunks
 
 
-def index_document():
-    from io import BytesIO
+def read_document(filename, file_bytes):
+    text = file_bytes.decode(
+        "utf-8-sig",
+        errors="replace"
+    ).strip()
 
-    with st.spinner("Preparando el documento..."):
-        file_bytes = supabase.storage.from_(BUCKET).download(TXT_FILE)
-        text = file_bytes.decode("utf-8-sig", errors="replace").strip()
+    if filename.lower().endswith(".txt"):
+        return text
 
+    if filename.lower().endswith(".csv"):
         if not text:
-            raise ValueError("El archivo de texto está vacío.")
+            return ""
 
-        chunks = split_text(text)
+        try:
+            dialect = csv.Sniffer().sniff(
+                text[:10000],
+                delimiters=",;\t|"
+            )
+        except csv.Error:
+            dialect = csv.excel
 
-        if not chunks:
-            raise ValueError("No se pudo dividir el texto en fragmentos útiles.")
+        reader = csv.reader(
+            io.StringIO(text),
+            dialect=dialect
+        )
 
-        embeddings = embedding_model.encode(
-            chunks,
-            normalize_embeddings=True
-        ).tolist()
+        rows = list(reader)
 
-        # Elimina únicamente los fragmentos anteriores de este mismo TXT.
-        supabase_admin.table("documents").delete().filter(
-            "metadata->>source", "eq", TXT_FILE
-        ).execute()
+        if not rows:
+            return ""
 
-        records = [
-            {
-                "content": chunk,
-                "metadata": {
-                    "source": TXT_FILE,
-                    "chunk_index": index
-                },
-                "embedding": embedding
-            }
-            for index, (chunk, embedding) in enumerate(zip(chunks, embeddings))
+        headers = [
+            value.strip() for value in rows[0]
         ]
 
-        for offset in range(0, len(records), 50):
-            supabase_admin.table("documents").insert(
-                records[offset:offset + 50]
-            ).execute()
+        lines = [
+            "Archivo de datos: " + filename,
+            "Columnas: " + " | ".join(headers)
+        ]
+
+        for row_number, row in enumerate(rows[1:], start=2):
+            fields = []
+
+            for i, value in enumerate(row):
+                if i < len(headers):
+                    header = headers[i] or f"Columna {i + 1}"
+                else:
+                    header = f"Columna {i + 1}"
+
+                fields.append(f"{header}: {value.strip()}")
+
+            if fields:
+                lines.append(
+                    f"Fila {row_number}: " + " | ".join(fields)
+                )
+
+        return "\n".join(lines).strip()
+
+    return ""
+
+
+def list_supported_files():
+    """Busca archivos TXT y CSV en la raíz del bucket."""
+    files = []
+    offset = 0
+    limit = 500
+
+    while True:
+        batch = supabase_admin.storage.from_(BUCKET).list(
+            "",
+            {"limit": limit, "offset": offset}
+        )
+
+        if not batch:
+            break
+
+        for item in batch:
+            name = item.get("name", "")
+
+            # Ignora carpetas y otros tipos de archivo.
+            if (
+                name
+                and item.get("id") is not None
+                and PurePosixPath(name).suffix.lower()
+                in SUPPORTED_EXTENSIONS
+            ):
+                files.append(name)
+
+        if len(batch) < limit:
+            break
+
+        offset += limit
+
+    return files
+
+
+def index_file(filename, file_bytes):
+    """Indexa un archivo solo si es nuevo o ha cambiado."""
+    fingerprint = hashlib.sha256(file_bytes).hexdigest()
+
+    existing = (
+        supabase_admin.table("documents")
+        .select("metadata")
+        .filter("metadata->>source", "eq", filename)
+        .limit(1)
+        .execute()
+    )
+
+    old_rows = existing.data or []
+
+    if old_rows:
+        metadata = old_rows[0].get("metadata") or {}
+
+        if metadata.get("fingerprint") == fingerprint:
+            return 0
+
+    text = read_document(filename, file_bytes)
+
+    if not text:
+        raise ValueError(
+            f"El archivo {filename} está vacío o no contiene texto."
+        )
+
+    chunks = split_text(text)
+
+    if not chunks:
+        raise ValueError(
+            f"No se pudieron crear fragmentos de {filename}."
+        )
+
+    embeddings = embedding_model.encode(
+        chunks,
+        normalize_embeddings=True
+    ).tolist()
+
+    records = [
+        {
+            "content": chunk,
+            "metadata": {
+                "source": filename,
+                "fingerprint": fingerprint,
+                "chunk_index": i
+            },
+            "embedding": embedding
+        }
+        for i, (chunk, embedding)
+        in enumerate(zip(chunks, embeddings))
+    ]
+
+    # Sustituye los fragmentos anteriores de este archivo.
+    # Si falla el borrado, no se insertan nuevos fragmentos.
+    supabase_admin.table("documents").delete().filter(
+        "metadata->>source", "eq", filename
+    ).execute()
+
+    for offset in range(0, len(records), BATCH_SIZE):
+        supabase_admin.table("documents").insert(
+            records[offset:offset + BATCH_SIZE]
+        ).execute()
 
     return len(chunks)
 
 
-st.title("Asistente IUARCOS")
-st.write("Consulta tus dudas sobre la documentación de IUARCOS.")
+def sync_documents():
+    """
+    Comprueba Storage antes de cada consulta.
+    Los archivos sin cambios no generan embeddings otra vez.
+    """
+    files = list_supported_files()
+    indexed = 0
 
-with st.expander("Preparación interna del documento"):
-    if st.button("Indexar documento TXT"):
-        try: 
-            total = index_document()
-            st.success(
-                f"Documento indexado correctamente: {total} fragmentos."
+    for filename in files:
+        file_bytes = supabase_admin.storage.from_(BUCKET).download(
+            filename
+        )
+
+        indexed += index_file(filename, file_bytes)
+
+    return indexed
+
+
+def build_context(documents):
+    sections = []
+
+    for doc in documents:
+        content = doc.get("content", "").strip()
+        metadata = doc.get("metadata") or {}
+        source = metadata.get("source", "Documento sin nombre")
+
+        if content:
+            sections.append(
+                f"FUENTE: {source}\n"
+                f"CONTENIDO:\n{content}"
             )
-        except Exception as e:
-            st.error(
-                f"Error al indexar: {type(e).__name__}: {e}"
-            )
+
+    return "\n\n---\n\n".join(sections)
+
+
+SYSTEM_PROMPT = """
+Eres un asistente virtual de IUARCOS y del Ayuntamiento de
+Arcos de la Frontera. Responde siempre en español.
+
+Utiliza exclusivamente la documentación proporcionada como fuente
+para responder sobre IUARCOS y el Ayuntamiento.
+
+REGLAS IMPORTANTES:
+
+- Responde a la pregunta concreta y ve directamente al asunto.
+- No inventes nombres, correos electrónicos, teléfonos, fechas,
+  cargos, requisitos ni ningún otro dato.
+- Antes de afirmar un dato personal o de contacto, comprueba que
+  aparece explícitamente en el contexto proporcionado.
+- Si preguntan por el nombre y el correo electrónico de una persona
+  y solo encuentras uno de esos datos, proporciona el que esté
+  documentado y aclara que el otro no consta.
+- Si no encuentras el dato solicitado, di claramente que no aparece
+  en la documentación consultada. No intentes adivinarlo.
+- Distingue entre propuestas, iniciativas presentadas, acuerdos
+  aprobados y medidas efectivamente implantadas.
+- Si hay documentos con información contradictoria o de distintas
+  fechas, explica la diferencia sin ocultarla.
+- Utiliza el nombre del archivo como referencia de la fuente cuando
+  resulte útil.
+- Sé breve en preguntas sencillas y más detallado cuando sea necesario.
+
+DOCUMENTACIÓN RECUPERADA:
+"""
+
+
+st.title("Asistente IUARCOS")
+st.write(
+    "Consulta tus dudas sobre la documentación de IUARCOS."
+)
 
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {
             "role": "assistant",
-            "content": "¡Hola! Puedes preguntarme sobre la documentación de IUARCOS."
+            "content": (
+                "¡Hola! Puedes preguntarme sobre la documentación de IUARCOS."
+            )
         }
     ]
 
@@ -136,28 +325,29 @@ if user_query:
         st.write(user_query)
 
     with st.chat_message("assistant"):
-        with st.spinner("Consultando la documentación..."):
-            try:
+        try:
+            with st.spinner("Comprobando la documentación..."):
+                # 1. Actualiza el índice antes de buscar la respuesta.
+                sync_documents()
+
+            with st.spinner("Consultando la documentación..."):
+                # 2. Genera el embedding de la pregunta.
                 query_embedding = embedding_model.encode(
                     user_query,
                     normalize_embeddings=True
                 ).tolist()
 
+                # Esta llamada recupera también los metadatos y la fuente.
                 result = supabase.rpc(
                     "match_documents",
                     {
                         "query_embedding": query_embedding,
-                        "match_threshold": 0.0,
                         "match_count": 10
                     }
                 ).execute()
 
                 documents = result.data or []
-                context = "\n\n".join(
-                    doc["content"]
-                    for doc in documents
-                    if doc.get("content")
-                )
+                context = build_context(documents)
 
                 if not context.strip():
                     answer = (
@@ -170,68 +360,26 @@ if user_query:
                         messages=[
                             {
                                 "role": "system",
-                                "content": (
-                                    "Eres un asistente virtual que ayuda a los ciudadanos a consultar "
-                                    "y comprender información relacionada con IUARCOS y el Ayuntamiento "
-                                    "de Arcos de la Frontera.\n\n"
-
-                                    "Responde siempre en español, con un tono natural, cercano, claro "
-                                    "y preciso. Tu objetivo es resolver la pregunta del usuario de la "
-                                    "forma más útil y directa posible.\n\n"
-
-                                    "Utiliza la documentación proporcionada como fuente principal, "
-                                    "independientemente de su temática. Puede incluir ordenanzas, "
-                                    "información municipal, actividad del grupo municipal, propuestas "
-                                    "al pleno, programas políticos, servicios públicos, trámites, "
-                                    "ayudas y otros documentos.\n\n"
-
-                                    "Adapta cada respuesta a la pregunta concreta. Identifica el tema "
-                                    "principal y utiliza únicamente la información relevante para "
-                                    "responder. No mezcles asuntos distintos ni añadas información "
-                                    "secundaria que no ayude a resolver la consulta.\n\n"
-
-                                    "Distingue entre hechos, normativa, propuestas, iniciativas "
-                                    "presentadas, acuerdos aprobados y medidas efectivamente "
-                                    "implantadas. No des por aprobado, vigente o ejecutado algo que "
-                                    "la documentación no permita confirmar.\n\n"
-
-                                    "No inventes datos, fechas, requisitos, procedimientos, compromisos "
-                                    "ni servicios. No presentes interpretaciones o recomendaciones "
-                                    "propias como si fueran información oficial o contenido de los "
-                                    "documentos.\n\n"
-
-                                    "Si la información encontrada responde solo parcialmente a la "
-                                    "pregunta, explica qué se puede confirmar y qué no consta en la "
-                                    "documentación. Si no encuentras información suficiente, dilo "
-                                    "con claridad y no rellenes los vacíos con suposiciones.\n\n"
-
-                                    "Ajusta la extensión a la consulta. Para preguntas sencillas, "
-                                    "responde en pocas frases. Para consultas complejas, ofrece el "
-                                    "detalle necesario de forma ordenada. Utiliza listas solo cuando "
-                                    "faciliten la comprensión y evita introducciones genéricas, "
-                                    "tablas innecesarias y conclusiones repetitivas.\n\n"
-
-                                    "Si existen varios documentos relevantes, combina su información "
-                                    "cuando sea necesario, respetando el contexto, la fecha y el "
-                                    "estado de cada asunto.\n\n"
-
-                                    "Prioriza siempre la precisión, la relevancia y la utilidad "
-                                    "para el ciudadano.\n\n"
-
-                                    "DOCUMENTACIÓN:\n"+ context
-                            )
+                                "content": SYSTEM_PROMPT + "\n\n" + context
                             },
-                            {"role": "user", "content": user_query}
+                            {
+                                "role": "user",
+                                "content": user_query
+                            }
                         ],
-                        temperature=0.2
+                        temperature=0.1
                     )
+
                     answer = (
                         completion.choices[0].message.content
                         or "No se pudo generar una respuesta."
                     )
 
-            except Exception as e:
-                answer = f"Error técnico: {type(e).__name__}: {e}"
+        except Exception:
+            answer = (
+                "No he podido consultar la documentación correctamente. "
+                "Inténtalo de nuevo más tarde."
+            )
 
         st.write(answer)
 
